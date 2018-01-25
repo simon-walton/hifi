@@ -888,7 +888,7 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
     qInstallMessageHandler(messageHandler);
 
     QFontDatabase::addApplicationFont(PathUtils::resourcesPath() + "styles/Inconsolata.otf");
-    _window->setWindowTitle("High Fidelity Interface");
+    _window->setWindowTitle("Modified Window Title");
 
     Model::setAbstractViewStateInterface(this); // The model class will sometimes need to know view state details from us
 
