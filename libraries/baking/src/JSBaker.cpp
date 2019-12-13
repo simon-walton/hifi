@@ -247,7 +247,7 @@ bool JSBaker::handleMultiLineComments(QTextStream& in) {
     while (!in.atEnd()) {
         in >> character;
         if (character == '*') {
-            if (in.read(1) == "/") {
+            if (in.read(1)[0] == '/') {
                 return true;
             }
         }
