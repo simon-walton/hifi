@@ -2109,6 +2109,23 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
         }
         return false;
     });
+    EntityTree::setGetUnscaledDimensionsForIDOperator([this](const QUuid& id) {
+        if (_aboutToQuit) {
+            return glm::vec3(1.0f);
+        }
+
+        auto entity = getEntities()->getEntity(id);
+        if (entity) {
+            return entity->getUnscaledDimensions();
+        }
+
+        auto avatarManager = DependencyManager::get<AvatarManager>();
+        auto avatar = static_pointer_cast<Avatar>(avatarManager->getAvatarBySessionID(id));
+        if (avatar) {
+            return avatar->getSNScale();
+        }
+        return glm::vec3(1.0f);
+    });
     Procedural::opaqueStencil = [](gpu::StatePointer state) { PrepareStencil::testMaskDrawShape(*state); };
     Procedural::transparentStencil = [](gpu::StatePointer state) { PrepareStencil::testMask(*state); };
 
@@ -5827,12 +5844,7 @@ void Application::centerUI() {
 
 void Application::cycleCamera() {
     auto menu = Menu::getInstance();
-    if (menu->isOptionChecked(MenuOption::FullscreenMirror)) {
-
-        menu->setIsOptionChecked(MenuOption::FullscreenMirror, false);
-        menu->setIsOptionChecked(MenuOption::FirstPersonLookAt, true);
-
-    } else if (menu->isOptionChecked(MenuOption::FirstPersonLookAt)) {
+    if (menu->isOptionChecked(MenuOption::FirstPersonLookAt)) {
 
         menu->setIsOptionChecked(MenuOption::FirstPersonLookAt, false);
         menu->setIsOptionChecked(MenuOption::LookAtCamera, true);
@@ -5840,12 +5852,16 @@ void Application::cycleCamera() {
     } else if (menu->isOptionChecked(MenuOption::LookAtCamera)) {
 
         menu->setIsOptionChecked(MenuOption::LookAtCamera, false);
-        menu->setIsOptionChecked(MenuOption::SelfieCamera, true);
+        if (menu->getActionForOption(MenuOption::SelfieCamera)->isVisible()) {
+            menu->setIsOptionChecked(MenuOption::SelfieCamera, true);
+        } else {
+            menu->setIsOptionChecked(MenuOption::FirstPersonLookAt, true);
+        }
 
     } else if (menu->isOptionChecked(MenuOption::SelfieCamera)) {
 
         menu->setIsOptionChecked(MenuOption::SelfieCamera, false);
-        menu->setIsOptionChecked(MenuOption::FullscreenMirror, true);
+        menu->setIsOptionChecked(MenuOption::FirstPersonLookAt, true);
 
     }
     cameraMenuChanged(); // handle the menu change

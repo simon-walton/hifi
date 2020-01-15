@@ -154,7 +154,7 @@ void Model::setOffset(const glm::vec3& offset) {
 }
 
 void Model::calculateTextureInfo() {
-    if (!_hasCalculatedTextureInfo && isLoaded() && getNetworkModel()->areTexturesLoaded() && !_modelMeshRenderItemIDs.empty()) {
+    if (!_hasCalculatedTextureInfo && isLoaded() && getNetworkModel()->areTexturesLoaded() && !_modelMeshRenderItems.isEmpty()) {
         size_t textureSize = 0;
         int textureCount = 0;
         bool allTexturesLoaded = true;
@@ -973,6 +973,22 @@ void Model::setCauterized(bool cauterized, const render::ScenePointer& scene) {
     }
 }
 
+void Model::setCullWithParent(bool cullWithParent) {
+    if (_cullWithParent != cullWithParent) {
+        _cullWithParent = cullWithParent;
+
+        render::Transaction transaction;
+        auto renderItemsKey = _renderItemKeyGlobalFlags;
+        for(auto item : _modelMeshRenderItemIDs) {
+            transaction.updateItem<ModelMeshPartPayload>(item, [cullWithParent, renderItemsKey](ModelMeshPartPayload& data) {
+                data.setCullWithParent(cullWithParent);
+                data.updateKey(renderItemsKey);
+            });
+        }
+        AbstractViewStateInterface::instance()->getMain3DScene()->enqueueTransaction(transaction);
+    }
+}
+
 const render::ItemKey Model::getRenderItemKeyGlobalFlags() const {
     return _renderItemKeyGlobalFlags;
 }
@@ -1052,7 +1068,7 @@ void Model::renderDebugMeshBoxes(gpu::Batch& batch, bool forward) {
     Transform meshToWorld(meshToWorldMatrix);
     batch.setModelTransform(meshToWorld);
 
-    DependencyManager::get<GeometryCache>()->bindSimpleProgram(batch, false, false, false, true, true, forward);
+    DependencyManager::get<GeometryCache>()->bindSimpleProgram(batch, false, false, true, true, forward, graphics::MaterialKey::CULL_NONE);
 
     for (auto& meshTriangleSets : _modelSpaceMeshTriangleSets) {
         for (auto &partTriangleSet : meshTriangleSets) {

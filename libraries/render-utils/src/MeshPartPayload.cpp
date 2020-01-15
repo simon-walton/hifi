@@ -106,6 +106,10 @@ void MeshPartPayload::updateKey(const render::ItemKey& key) {
         builder.withTransparent();
     }
 
+    if (_cullWithParent) {
+        builder.withSubMetaCulled();
+    }
+
     _itemKey = builder.build();
 }
 
@@ -114,6 +118,13 @@ ItemKey MeshPartPayload::getKey() const {
 }
 
 Item::Bound MeshPartPayload::getBound() const {
+    graphics::MaterialPointer material = _drawMaterials.empty() ? nullptr : _drawMaterials.top().material;
+    if (material && material->isProcedural() && material->isReady()) {
+        auto procedural = std::static_pointer_cast<graphics::ProceduralMaterial>(_drawMaterials.top().material);
+        if (procedural->hasVertexShader() && procedural->hasBoundOperator()) {
+           return procedural->getBound();
+        }
+    }
     return _worldBound;
 }
 
@@ -139,6 +150,9 @@ ShapeKey MeshPartPayload::getShapeKey() const {
         }
         if (drawMaterialKey.isUnlit()) {
             builder.withUnlit();
+        }
+        if (material) {
+            builder.withCullFaceMode(material->getCullFaceMode());
         }
     }
 
@@ -179,6 +193,9 @@ void MeshPartPayload::render(RenderArgs* args) {
 
     if (!_drawMaterials.empty() && _drawMaterials.top().material && _drawMaterials.top().material->isProcedural() &&
             _drawMaterials.top().material->isReady()) {
+        if (!(enableMaterialProceduralShaders && ENABLE_MATERIAL_PROCEDURAL_SHADERS)) {
+            return;
+        }
         auto procedural = std::static_pointer_cast<graphics::ProceduralMaterial>(_drawMaterials.top().material);
         auto& schema = _drawMaterials.getSchemaBuffer().get<graphics::MultiMaterial::Schema>();
         glm::vec4 outColor = glm::vec4(ColorUtils::tosRGBVec3(schema._albedo), schema._opacity);
@@ -355,6 +372,10 @@ void ModelMeshPartPayload::updateKey(const render::ItemKey& key) {
         builder.withTransparent();
     }
 
+    if (_cullWithParent) {
+        builder.withSubMetaCulled();
+    }
+
     _itemKey = builder.build();
 }
 
@@ -408,6 +429,9 @@ void ModelMeshPartPayload::setShapeKey(bool invalidateShapeKey, PrimitiveMode pr
         }
         if (isUnlit) {
             builder.withUnlit();
+        }
+        if (material) {
+            builder.withCullFaceMode(material->getCullFaceMode());
         }
     }
 
