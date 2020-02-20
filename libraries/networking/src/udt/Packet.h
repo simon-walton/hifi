@@ -68,6 +68,8 @@ public:
         ObfuscationL3 = 0x3, // 11
     };
 
+    enum class ReliablePacket: quint16 {kData, kSyn, kAck, kSynAck, kReset};
+
     static std::unique_ptr<Packet> create(qint64 size = -1, bool isReliable = false, bool isPartOfMessage = false);
     static std::unique_ptr<Packet> fromReceivedPacket(std::unique_ptr<char[]> data, qint64 size, const HifiSockAddr& senderSockAddr);
     
@@ -75,9 +77,9 @@ public:
     static std::unique_ptr<Packet> createCopy(const Packet& other);
     
     // Current level's header size
-    static int localHeaderSize(bool isPartOfMessage = false);
+    static int localHeaderSize(bool isPartOfMessage = false, bool isReliable = false);
     // Cumulated size of all the headers
-    static int totalHeaderSize(bool isPartOfMessage = false);
+    static int totalHeaderSize(bool isPartOfMessage = false, bool isReliable = false);
     // The maximum payload size this packet can use to fit in MTU
     static int maxPayloadSize(bool isPartOfMessage = false);
     
@@ -87,12 +89,17 @@ public:
 
     ObfuscationLevel getObfuscationLevel() const { return _obfuscationLevel; }
     SequenceNumber getSequenceNumber() const { return _sequenceNumber; }
+    SequenceNumber getRemoteSequenceNumber() const { return _remoteSequenceNumber; }
+    int getWindowSize() const { return _windowSize; }
     MessageNumber getMessageNumber() const { return _messageNumber; }
     PacketPosition getPacketPosition() const { return _packetPosition; }
     MessagePartNumber getMessagePartNumber() const { return _messagePartNumber; }
+    ReliablePacket getReliablePacketType() const { return _reliablePacketType; }
     
     void writeMessageNumber(MessageNumber messageNumber, PacketPosition position, MessagePartNumber messagePartNumber);
     void writeSequenceNumber(SequenceNumber sequenceNumber) const;
+    void writeRemoteSequenceNumber(SequenceNumber remoteSequenceNumber);
+    void writeWindowSize(int windowSize);
     void obfuscate(ObfuscationLevel level);
 
 protected:
@@ -120,6 +127,9 @@ private:
     mutable MessageNumber _messageNumber { 0 };
     mutable PacketPosition _packetPosition { PacketPosition::ONLY };
     mutable MessagePartNumber _messagePartNumber { 0 };
+    mutable SequenceNumber _remoteSequenceNumber { 0 };
+    mutable int _windowSize { 0 };
+    mutable ReliablePacket _reliablePacketType{ReliablePacket::kData};
 };
 
 } // namespace udt

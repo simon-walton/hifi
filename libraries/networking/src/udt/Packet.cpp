@@ -24,12 +24,12 @@ using namespace udt;
 int packetMetaTypeId = qRegisterMetaType<Packet*>("Packet*");
 
 using Key = uint64_t;
-static const std::array<Key, 4> KEYS {{
+static const std::array<Key, 4> KEYS{ {
     0x0,
     0x6362726973736574,
     0x7362697261726461,
     0x72687566666d616e,
-}};
+} };
 
 void xorHelper(char* start, int size, Key key) {
     auto current = start;
@@ -39,29 +39,31 @@ void xorHelper(char* start, int size, Key key) {
     }
 }
 
-int Packet::localHeaderSize(bool isPartOfMessage) {
-    return sizeof(Packet::SequenceNumberAndBitField) +
-            (isPartOfMessage ? sizeof(Packet::MessageNumberAndBitField) + sizeof(MessagePartNumber) : 0);
+int Packet::localHeaderSize(bool isPartOfMessage, bool isReliable) {
+    return sizeof(SequenceNumberAndBitField) +
+           (isPartOfMessage ? sizeof(MessageNumberAndBitField) + sizeof(MessagePartNumber) : 0) +
+           (isReliable ? sizeof(SequenceNumber) + sizeof(ReliablePacket) + sizeof(quint16) : 0);
 }
 
-int Packet::totalHeaderSize(bool isPartOfMessage) {
-    return BasePacket::totalHeaderSize() + Packet::localHeaderSize(isPartOfMessage);
+int Packet::totalHeaderSize(bool isPartOfMessage, bool isReliable) {
+    return BasePacket::totalHeaderSize() + Packet::localHeaderSize(isPartOfMessage, isReliable);
 }
 
 int Packet::maxPayloadSize(bool isPartOfMessage) {
-    return BasePacket::maxPayloadSize() - Packet::localHeaderSize(isPartOfMessage);
+    return BasePacket::maxPayloadSize() - Packet::localHeaderSize(isPartOfMessage, true);
 }
-
 
 std::unique_ptr<Packet> Packet::create(qint64 size, bool isReliable, bool isPartOfMessage) {
     auto packet = std::unique_ptr<Packet>(new Packet(size, isReliable, isPartOfMessage));
-    
+
     packet->open(QIODevice::ReadWrite);
-   
+
     return packet;
 }
 
-std::unique_ptr<Packet> Packet::fromReceivedPacket(std::unique_ptr<char[]> data, qint64 size, const HifiSockAddr& senderSockAddr) {
+std::unique_ptr<Packet> Packet::fromReceivedPacket(std::unique_ptr<char[]> data,
+                                                   qint64 size,
+                                                   const HifiSockAddr& senderSockAddr) {
     // Fail with invalid size
     Q_ASSERT(size >= 0);
 
@@ -78,39 +80,35 @@ std::unique_ptr<Packet> Packet::createCopy(const Packet& other) {
 }
 
 Packet::Packet(qint64 size, bool isReliable, bool isPartOfMessage) :
-    BasePacket((size == -1) ? -1 : (Packet::localHeaderSize() + size)),
+    BasePacket((size == -1) ? -1 : (Packet::localHeaderSize(isPartOfMessage, isReliable) + size)),
     _isReliable(isReliable),
-    _isPartOfMessage(isPartOfMessage)
-{
-    adjustPayloadStartAndCapacity(Packet::localHeaderSize(_isPartOfMessage));
+    _isPartOfMessage(isPartOfMessage) {
+    adjustPayloadStartAndCapacity(Packet::localHeaderSize(_isPartOfMessage, _isReliable));
     // set the UDT header to default values
     writeHeader();
 }
 
 Packet::Packet(std::unique_ptr<char[]> data, qint64 size, const HifiSockAddr& senderSockAddr) :
-    BasePacket(std::move(data), size, senderSockAddr)
-{
+    BasePacket(std::move(data), size, senderSockAddr) {
     readHeader();
 
-    adjustPayloadStartAndCapacity(Packet::localHeaderSize(_isPartOfMessage), _payloadSize > 0);
+    adjustPayloadStartAndCapacity(Packet::localHeaderSize(_isPartOfMessage, _isReliable), _payloadSize > 0);
 
     if (getObfuscationLevel() != Packet::NoObfuscation) {
 #ifdef UDT_CONNECTION_DEBUG
         QString debugString = "Unobfuscating packet %1 with level %2";
-        debugString = debugString.arg(QString::number((uint32_t)getSequenceNumber()),
-                                      QString::number(getObfuscationLevel()));
+        debugString = debugString.arg(QString::number((uint32_t)getSequenceNumber()), QString::number(getObfuscationLevel()));
 
         if (isPartOfMessage()) {
             debugString += "\n";
             debugString += "    Message Number: %1, Part Number: %2.";
-            debugString = debugString.arg(QString::number(getMessageNumber()),
-                                          QString::number(getMessagePartNumber()));
+            debugString = debugString.arg(QString::number(getMessageNumber()), QString::number(getMessagePartNumber()));
         }
 
         HIFI_FCDEBUG(networking(), debugString);
 #endif
 
-        obfuscate(NoObfuscation); // Undo obfuscation
+        obfuscate(NoObfuscation);  // Undo obfuscation
     }
 }
 
@@ -151,11 +149,21 @@ void Packet::writeSequenceNumber(SequenceNumber sequenceNumber) const {
     writeHeader();
 }
 
+void Packet::writeRemoteSequenceNumber(SequenceNumber remoteSequenceNumber) {
+    _remoteSequenceNumber = remoteSequenceNumber;
+    writeHeader();
+}
+
+void Packet::writeWindowSize(int windowSize) {
+    _windowSize = windowSize;
+    writeHeader();
+}
+
 void Packet::obfuscate(ObfuscationLevel level) {
-    auto obfuscationKey = KEYS[getObfuscationLevel()] ^ KEYS[level]; // Undo old and apply new one.
+    auto obfuscationKey = KEYS[getObfuscationLevel()] ^ KEYS[level];  // Undo old and apply new one.
     if (obfuscationKey != 0) {
-        xorHelper(getData() + localHeaderSize(isPartOfMessage()),
-                  getDataSize() - localHeaderSize(isPartOfMessage()), obfuscationKey);
+        xorHelper(getData() + localHeaderSize(isPartOfMessage()), getDataSize() - localHeaderSize(isPartOfMessage()),
+                  obfuscationKey);
 
         // Update members and header
         _obfuscationLevel = level;
@@ -168,6 +176,8 @@ void Packet::copyMembers(const Packet& other) {
     _isPartOfMessage = other._isPartOfMessage;
     _obfuscationLevel = other._obfuscationLevel;
     _sequenceNumber = other._sequenceNumber;
+    _remoteSequenceNumber = other._remoteSequenceNumber;
+    _windowSize = other._windowSize;
     _packetPosition = other._packetPosition;
     _messageNumber = other._messageNumber;
     _messagePartNumber = other._messagePartNumber;
@@ -176,13 +186,24 @@ void Packet::copyMembers(const Packet& other) {
 
 void Packet::readHeader() const {
     SequenceNumberAndBitField* seqNumBitField = reinterpret_cast<SequenceNumberAndBitField*>(_packet.get());
-    
+
     Q_ASSERT_X(!(*seqNumBitField & CONTROL_BIT_MASK), "Packet::readHeader()", "This should be a data packet");
-    
-    _isReliable = (bool) (*seqNumBitField & RELIABILITY_BIT_MASK); // Only keep reliability bit
-    _isPartOfMessage = (bool) (*seqNumBitField & MESSAGE_BIT_MASK); // Only keep message bit
+
+    _isReliable = (bool)(*seqNumBitField & RELIABILITY_BIT_MASK);   // Only keep reliability bit
+    _isPartOfMessage = (bool)(*seqNumBitField & MESSAGE_BIT_MASK);  // Only keep message bit
     _obfuscationLevel = (ObfuscationLevel)((*seqNumBitField & OBFUSCATION_LEVEL_MASK) >> OBFUSCATION_LEVEL_OFFSET);
-    _sequenceNumber = SequenceNumber{ *seqNumBitField & SEQUENCE_NUMBER_MASK }; // Remove the bit field
+    _sequenceNumber = SequenceNumber{ *seqNumBitField & SEQUENCE_NUMBER_MASK };  // Remove the bit field
+
+    if (_isReliable) {
+        char* fieldLocation = _packet.get();
+        fieldLocation += sizeof(SequenceNumberAndBitField);
+        _remoteSequenceNumber = *reinterpret_cast<SequenceNumber*>(fieldLocation);
+        fieldLocation += sizeof(SequenceNumber);
+        _windowSize = *reinterpret_cast<quint16*>(fieldLocation);
+        fieldLocation += sizeof(quint16);
+        _reliablePacketType = *reinterpret_cast<ReliablePacket*>(fieldLocation);
+        seqNumBitField += 2;
+    }
 
     if (_isPartOfMessage) {
         MessageNumberAndBitField* messageNumberAndBitField = seqNumBitField + 1;
@@ -198,30 +219,38 @@ void Packet::readHeader() const {
 void Packet::writeHeader() const {
     // grab pointer to current SequenceNumberAndBitField
     SequenceNumberAndBitField* seqNumBitField = reinterpret_cast<SequenceNumberAndBitField*>(_packet.get());
-    
+
     // Write sequence number and reset bit field
-    Q_ASSERT_X(!((SequenceNumber::Type)_sequenceNumber & BIT_FIELD_MASK),
-               "Packet::writeHeader()", "Sequence number is overflowing into bit field");
+    Q_ASSERT_X(!((SequenceNumber::Type)_sequenceNumber & BIT_FIELD_MASK), "Packet::writeHeader()",
+               "Sequence number is overflowing into bit field");
     *seqNumBitField = ((SequenceNumber::Type)_sequenceNumber);
-    
+
     if (_isReliable) {
         *seqNumBitField |= RELIABILITY_BIT_MASK;
+
+        char* fieldLocation = _packet.get();
+        fieldLocation += sizeof(SequenceNumberAndBitField);
+        *reinterpret_cast<SequenceNumber*>(fieldLocation) = _remoteSequenceNumber;
+        fieldLocation += sizeof(SequenceNumber);
+        *reinterpret_cast<quint16*>(fieldLocation) = _windowSize;
+        fieldLocation += sizeof(quint16);
+        *reinterpret_cast<ReliablePacket*>(fieldLocation) = _reliablePacketType;
     }
 
     if (_obfuscationLevel != NoObfuscation) {
         *seqNumBitField |= (_obfuscationLevel << OBFUSCATION_LEVEL_OFFSET);
     }
-    
+
     if (_isPartOfMessage) {
         *seqNumBitField |= MESSAGE_BIT_MASK;
 
-        Q_ASSERT_X(!(_messageNumber & PACKET_POSITION_MASK),
-                   "Packet::writeHeader()", "Message number is overflowing into bit field");
+        Q_ASSERT_X(!(_messageNumber & PACKET_POSITION_MASK), "Packet::writeHeader()",
+                   "Message number is overflowing into bit field");
 
-        MessageNumberAndBitField* messageNumberAndBitField = seqNumBitField + 1;
+        MessageNumberAndBitField* messageNumberAndBitField = seqNumBitField + (_isReliable ? 3 : 1);
         *messageNumberAndBitField = _messageNumber;
         *messageNumberAndBitField |= _packetPosition << PACKET_POSITION_OFFSET;
-        
+
         MessagePartNumber* messagePartNumber = messageNumberAndBitField + 1;
         *messagePartNumber = _messagePartNumber;
     }

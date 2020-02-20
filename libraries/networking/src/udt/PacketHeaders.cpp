@@ -100,7 +100,7 @@ PacketVersion versionForPacketType(PacketType packetType) {
         case PacketType::BulkAvatarTraits:
             return static_cast<PacketVersion>(AvatarMixerPacketVersion::AvatarTraitsAck);
         default:
-            return 22;
+            return 23;
     }
 }
 

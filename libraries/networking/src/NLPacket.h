@@ -62,7 +62,7 @@ public:
     // Current level's header size
     static int localHeaderSize(PacketType type);
     // Cumulated size of all the headers
-    static int totalHeaderSize(PacketType type, bool isPartOfMessage = false);
+    static int totalHeaderSize(PacketType type, bool isPartOfMessage = false, bool isReliable = false);
     // The maximum payload size this packet can use to fit in MTU
     static int maxPayloadSize(PacketType type, bool isPartOfMessage = false);
     
